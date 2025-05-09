@@ -1,0 +1,56 @@
+FROM node:20.18
+
+ARG OPENSSL_VERSION=3.1.2
+
+RUN apt-get update && \
+    apt-get -y upgrade dpkg && \
+    apt-get install --no-install-recommends -y \
+    build-essential \
+    libz-dev \
+    make \
+    nano \
+    nmap \
+    openssh-client \
+    wget \
+    && apt-get autoremove && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install OpenSSL
+RUN wget https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz && \
+    tar -xzvf openssl-${OPENSSL_VERSION}.tar.gz && \
+    cd openssl-${OPENSSL_VERSION} && \
+    ./config --prefix=/usr --openssldir=/etc/ssl --libdir=lib no-shared zlib-dynamic && \
+    ./Configure enable-fips && \
+    make -j"$(nproc)" && \
+    make install && \
+    ldconfig /usr/local/lib64/ && \
+    cd .. && \
+    rm -rf openssl-${OPENSSL_VERSION} openssl-${OPENSSL_VERSION}.tar.gz
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+# Generate RSA key-pair into /app/keys
+RUN mkdir -p /app/keys && \
+    # 2048-bit private key
+    openssl genpkey -algorithm RSA \
+      -out /app/keys/private.pem \
+      -pkeyopt rsa_keygen_bits:2048 && \
+    # public key
+    openssl rsa \
+      -pubout \
+      -in /app/keys/private.pem \
+      -out /app/keys/public.pem
+
+COPY . .
+
+RUN npm install -g ts-node typescript
+
+COPY nodessl.cnf /etc/ssl/nodessl.cnf
+
+ENV OPENSSL_CONF=/etc/ssl/nodessl.cnf
+ENV OPENSSL_MODULES=/usr/local/lib/ossl-modules/
+
+CMD ["ts-node", "src/index.ts"]
